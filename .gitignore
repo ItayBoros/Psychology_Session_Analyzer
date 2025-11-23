@@ -1,0 +1,27 @@
+# Virtual environments
+.venv/
+venv/
+
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.cache/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Large data / models / assets
+data/
+models/
+*.mp4
+*.zip
+*.tar.gz
