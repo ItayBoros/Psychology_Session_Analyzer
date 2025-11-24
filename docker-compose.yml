@@ -1,0 +1,87 @@
+version: '3.8'
+services:
+  rabbitmq:
+    image: "rabbitmq:3-management"
+    ports:
+      - "5672:5672" #messaging port
+      - "15672:15672" #ui port
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - psycho_network
+  minio:
+    image: "minio/minio"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: password123
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    volumes:
+      - ./minio_data:/data #persistent storage
+    networks:
+      - psycho_network
+  mongodb:
+    image: "mongo:latest"
+    container_name: psycho_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./mongo_data:/data/db #persistent storage
+    networks:
+      - psycho_network
+  redis:
+    image: "redis:latest"
+    container_name: psycho_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - psycho_network
+  datadog:
+    image: gcr.io/datadoghq/agent:7
+    container_name: psycho_datadog
+    environment:
+      - DD_API_KEY=${SS_API_KEY}
+      - DD_SITE="datadoghq.com"
+      - DD_LOGS_ENABLED=true
+      - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /proc/:/host/proc/:ro
+      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+    networks:
+      - psycho_network
+  upload-api:
+    build: ./upload-api
+    container_name: psycho_upload
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=admin
+      - MINIO_SECRET_KEY=password123
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - psycho_network
+
+networks:
+  psycho_network:
+    driver: bridge
