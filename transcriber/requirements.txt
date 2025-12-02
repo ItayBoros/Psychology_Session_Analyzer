@@ -1,0 +1,4 @@
+requests
+minio
+pika
+ddtrace

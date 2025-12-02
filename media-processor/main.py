@@ -52,8 +52,20 @@ def process_video(ch, method, properties, body):
         video.close()
 
         logger.info(f"Uploading {video_id}.mp3...")
-        client.fput_object(DEST_BUCKET, f"{video_id}.mp3", local_audio_path)
-        
+
+        # Check if file actually exists and has size
+        file_stat = os.stat(local_audio_path)
+        if file_stat.st_size == 0:
+            raise Exception("Generated MP3 is empty (0 bytes)!")
+
+        with open(local_audio_path, 'rb') as file_data:
+            client.put_object(
+                DEST_BUCKET, 
+                f"{video_id}.mp3", 
+                file_data, 
+                file_stat.st_size,
+                content_type="audio/mpeg"
+            )        
         # publish audio ready message to RabbitMQ
         next_message = {
             "video_id": video_id,
