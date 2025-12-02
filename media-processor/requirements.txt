@@ -1,0 +1,4 @@
+pika   
+minio
+ddtrace
+moviepy==1.0.3

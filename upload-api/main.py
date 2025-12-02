@@ -35,27 +35,32 @@ def get_minio_client():
     return client
 
 #connect to RabbitMQ
-def publish_message(filename: str, file_id: str):
-    try:
-        connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
-        channel = connection.channel()
-        
-        # Declare the queue
-        channel.queue_declare(queue='video_tasks', durable=True)
+def publish_message(video_id: str, original_filename: str, minio_path: str):
+        try:
+            connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
+            channel = connection.channel()
+            
+            # Declare the queue
+            channel.queue_declare(queue='video_tasks', durable=True)
 
-        message = {"video_id": file_id , "filename": filename, "file_path": f"{BUCKET_NAME}/{filename}"}
-        channel.basic_publish(
-            exchange='',
-            routing_key='video_uploaded',
-            body=json.dumps(message),
-            properties=pika.BasicProperties(
-                delivery_mode=2,  # make message persistent
-            ))
-        logger.info(f"Published message to RabbitMQ: {message}")
-        connection.close()
-    except Exception as e:
-        logger.error(f"Failed to publish message to RabbitMQ: {e}")
-        raise e
+            message = {
+            "video_id": video_id,
+            "original_filename": original_filename,
+            "file_path": minio_path
+            }
+            
+            channel.basic_publish(
+                exchange='',
+                routing_key='video_uploaded',
+                body=json.dumps(message),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,  # make message persistent
+                ))
+            logger.info(f"Published message to RabbitMQ: {message}")
+            connection.close()
+        except Exception as e:
+            logger.error(f"Failed to publish message to RabbitMQ: {e}")
+            raise e
     
 # Upload endpoint
 @app.post("/upload/")
