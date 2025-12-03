@@ -111,6 +111,26 @@ services:
         condition: service_healthy
     networks:
       - psycho_network
+  nlp-analyzer:
+    build: ./nlp-analyzer
+    container_name: psycho_nlp
+    volumes:
+      - ./nlp-analyzer:/app
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - MONGO_URI=mongodb://mongodb:27017
+      - REDIS_HOST=redis
+      - OPENAI_API_KEY=${OPENAI_API_KEY} 
+      - DD_API_KEY=${DD_API_KEY}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mongodb:
+        condition: service_started
+      redis:
+        condition: service_started
+    networks:
+      - psycho_network
 networks:
   psycho_network:
     driver: bridge
