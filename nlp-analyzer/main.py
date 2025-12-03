@@ -136,9 +136,11 @@ def process_analysis(ch, method, properties, body):
         final_document = {
             "video_id": video_id,
             "raw_transcript": transcript_text,
+            "timestamp": message.get("timestamp", None),
             "roles_identified": analysis_result.get("roles", {}),
-            "sentence_analysis": analysis_result.get("analysis", []),
-            "timestamp": message.get("timestamp", None)
+            "emotional_profile": analysis_result.get("emotional_profile", []), 
+            "key_interventions": analysis_result.get("key_interventions", []),
+            "sentence_analysis": analysis_result.get("analysis", [])
         }
         
         collection.update_one(
