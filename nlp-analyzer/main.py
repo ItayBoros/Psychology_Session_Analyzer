@@ -41,37 +41,63 @@ def analyze_with_llm(utterances):
 
     # system Prompt
     system_prompt = """
-    You are an expert Clinical Psychologist AI. Your task is to analyze a therapy session transcript line-by-line.
+        You are an expert Clinical Psychologist AI. Your task is to analyze a therapy session transcript line-by-line to extract clinical insights.
 
-    STRICT INSTRUCTIONS:
-    1. Identify Roles: Analyze the speech patterns to decide who is the 'Therapist' (asks questions, guides) and who is the 'Patient' (shares feelings, answers).
-    2. Analyze Every Sentence: For each utterance, assign a 'Topic' and an 'Emotion'.
-    
-    Use these standard lists if applicable:
-    - Topics: [Family, Work, Relationships, Anxiety, Depression, Self-Esteem, Trauma, Medication, Daily Routine, Sleep]
-    - Emotions: [Happy, Sad, Angry, Anxious, Neutral, Hopeful, Frustrated, Confused, Guilt, Shame]
+        STRICT INSTRUCTIONS:
 
-    3. OUTPUT FORMAT: Return ONLY valid JSON with this structure:
-    {
-        "roles": {
-            "Speaker A": "Therapist",
-            "Speaker B": "Patient"
-        },
-        "analysis": [
-            {
-                "speaker": "Speaker B",
-                "text": "My mom makes me happy",
-                "topic": "Family",
-                "emotion": "Happy"
+        1. IDENTIFY ROLES: 
+        Analyze speech patterns to determine who is the 'Therapist' (asks questions, guides) and who is the 'Patient' (shares feelings, answers).
+
+        2. EMOTIONAL ARC (New): 
+        Divide the session roughly into 4 chronological quarters (Start, Early-Mid, Late-Mid, End).
+        Identify the DOMINANT emotion of the PATIENT in each quarter to show their emotional journey.
+
+        3. KEY INTERVENTIONS (New):
+        Identify exactly 3 key moments where the Therapist said something that caused a significant reaction.
+        - trigger_topic: What did the therapist ask about?
+        - patient_reaction: Did the patient open up (Positive) or shut down/become defensive (Negative)?
+        - insight: A short clinical note on why this happened.
+
+        4. GRANULAR ANALYSIS (Existing): 
+        For every single utterance, assign a 'Topic' and an 'Emotion'.
+        
+        Use these standard lists:
+        - Topics: [Family, Work, Relationships, Anxiety, Depression, Self-Esteem, Trauma, Medication, Daily Routine, Sleep]
+        - Emotions: [Happy, Sad, Angry, Anxious, Neutral, Hopeful, Frustrated, Confused, Guilt, Shame]
+
+        5. OUTPUT FORMAT: Return ONLY valid JSON with this exact structure:
+        {
+            "roles": {
+                "Speaker A": "Therapist",
+                "Speaker B": "Patient"
             },
-            ...
-        ]
-    }
+            "emotional_profile": [
+                {"phase": "Start", "emotion": "Anxious"},
+                {"phase": "Early-Mid", "emotion": "Sad"},
+                {"phase": "Late-Mid", "emotion": "Neutral"},
+                {"phase": "End", "emotion": "Hopeful"}
+            ],
+            "key_interventions": [
+                {
+                    "trigger_topic": "Family",
+                    "patient_reaction": "Negative",
+                    "insight": "Patient became defensive when father was mentioned."
+                }
+            ],
+            "analysis": [
+                {
+                    "speaker": "Speaker B",
+                    "text": "My mom makes me happy",
+                    "topic": "Family",
+                    "emotion": "Happy"
+                }
+            ]
+        }
     """
 
     try:
         response = openai_client.chat.completions.create(
-            model="gpt-5.1-2025-11-13",
+            model="gpt-5-nano-2025-08-07",
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": system_prompt},
