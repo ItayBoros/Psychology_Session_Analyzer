@@ -48,9 +48,13 @@ services:
     container_name: psycho_datadog
     environment:
       - DD_API_KEY=${DD_API_KEY}
-      - DD_SITE="datadoghq.com"
-      - DD_LOGS_ENABLED=true
+      - DD_SITE=${DD_SITE}
+      - DD_APM_ENABLED=true      
+      - DD_APM_NON_LOCAL_TRAFFIC=true  
+      - DD_LOGS_ENABLED=true           
       - DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL=true
+    ports:
+      - "8126:8126"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - /proc/:/host/proc/:ro
@@ -68,6 +72,9 @@ services:
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=admin
       - MINIO_SECRET_KEY=password123
+      - DD_SERVICE=upload-api     
+      - DD_ENV=development          
+      - DD_AGENT_HOST=datadog
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -87,6 +94,9 @@ services:
       - MINIO_ACCESS_KEY=admin
       - MINIO_SECRET_KEY=password123
       - DD_API_KEY=${DD_API_KEY}
+      - DD_SERVICE=media-processor     
+      - DD_ENV=development          
+      - DD_AGENT_HOST=datadog
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -106,6 +116,9 @@ services:
       - MINIO_SECRET_KEY=password123
       - ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
       - DD_API_KEY=${DD_API_KEY}
+      - DD_SERVICE=transcriber     
+      - DD_ENV=development          
+      - DD_AGENT_HOST=datadog
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -122,6 +135,9 @@ services:
       - REDIS_HOST=redis
       - OPENAI_API_KEY=${OPENAI_API_KEY} 
       - DD_API_KEY=${DD_API_KEY}
+      - DD_SERVICE=nlp-analyzer     
+      - DD_ENV=development          
+      - DD_AGENT_HOST=datadog
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -140,8 +156,27 @@ services:
     environment:
       - MONGO_URI=mongodb://mongodb:27017
       - DD_API_KEY=${DD_API_KEY}
+      - DD_SERVICE=query-api     
+      - DD_ENV=development          
+      - DD_AGENT_HOST=datadog
     depends_on:
       mongodb:
+        condition: service_started
+    networks:
+      - psycho_network
+  frontend:
+    build: ./frontend
+    container_name: psycho_frontend
+    command: streamlit run app.py --server.address=0.0.0.0 --server.maxUploadSize=2000
+    ports:
+      - "8501:8501"  # Access via http://localhost:8501
+    environment:
+      - UPLOAD_API_URL=http://upload-api:8000
+      - QUERY_API_URL=http://query-api:8000
+    depends_on:
+      upload-api:
+        condition: service_started
+      query-api:
         condition: service_started
     networks:
       - psycho_network
