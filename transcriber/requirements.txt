@@ -1,4 +1,4 @@
-requests
 minio
-pika
+aio_pika
 ddtrace
+httpx
