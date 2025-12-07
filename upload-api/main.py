@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 from fastapi import FastAPI, UploadFile, HTTPException
 from fastapi.concurrency import run_in_threadpool
-import pika
+import aio_pika
 import uuid
 import io
 from minio import Minio
@@ -38,30 +38,30 @@ def get_minio_client():
     return client
 
 #connect to RabbitMQ
-def publish_message(video_id: str, original_filename: str, minio_path: str):
+async def publish_message(video_id: str, original_filename: str, minio_path: str):
         try:
-            connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
-            channel = connection.channel()
+            connection = await aio_pika.connect_robust(f"amqp://guest:guest@{RABBITMQ_HOST}/")            
             
-            # Declare the queue
-            channel.queue_declare(queue='video_uploaded', durable=True)
+            async with connection:
+                channel = await connection.channel()
+                # Declare the queue
+                queue = await channel.declare_queue("video_uploaded", durable=True)
 
-            message = {
-            "video_id": video_id,
-            "original_filename": original_filename,
-            "file_path": minio_path,
-            "timestamp": datetime.now().isoformat()
-            }
+                message = {
+                "video_id": video_id,
+                "filename": original_filename,
+                "file_path": minio_path,
+                "timestamp": datetime.now().isoformat()
+                }
+                await channel.default_exchange.publish(
+                    aio_pika.Message(
+                        body=json.dumps(message).encode(),
+                        delivery_mode=aio_pika.DeliveryMode.PERSISTENT
+                    ),
+                    routing_key="video_uploaded"
+                )
             
-            channel.basic_publish(
-                exchange='',
-                routing_key='video_uploaded',
-                body=json.dumps(message),
-                properties=pika.BasicProperties(
-                    delivery_mode=2,  # make message persistent
-                ))
             logger.info(f"Published message to RabbitMQ: {message}")
-            connection.close()
         except Exception as e:
             logger.error(f"Failed to publish message to RabbitMQ: {e}")
             raise e
@@ -89,8 +89,7 @@ async def upload_video(file: UploadFile):
         logger.info(f"Uploaded {file.filename} as {new_filename}")
 
 
-        await run_in_threadpool(
-            publish_message,
+        await publish_message(
             file_uuid,
             file.filename,
             f"{BUCKET_NAME}/{new_filename}"
