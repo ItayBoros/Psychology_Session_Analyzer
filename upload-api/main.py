@@ -1,9 +1,12 @@
 import os 
 import json
 import logging
+from datetime import datetime
 from fastapi import FastAPI, UploadFile, HTTPException
+from fastapi.concurrency import run_in_threadpool
 import pika
 import uuid
+import io
 from minio import Minio
 from minio.error import S3Error
 
@@ -41,12 +44,13 @@ def publish_message(video_id: str, original_filename: str, minio_path: str):
             channel = connection.channel()
             
             # Declare the queue
-            channel.queue_declare(queue='video_tasks', durable=True)
+            channel.queue_declare(queue='video_uploaded', durable=True)
 
             message = {
             "video_id": video_id,
             "original_filename": original_filename,
-            "file_path": minio_path
+            "file_path": minio_path,
+            "timestamp": datetime.now().isoformat()
             }
             
             channel.basic_publish(
@@ -62,22 +66,20 @@ def publish_message(video_id: str, original_filename: str, minio_path: str):
             logger.error(f"Failed to publish message to RabbitMQ: {e}")
             raise e
     
+
 # Upload endpoint
 @app.post("/upload/")
 async def upload_video(file: UploadFile):
     client = get_minio_client()
-
     file_uuid = str(uuid.uuid4())
-
     file_extention = os.path.splitext(file.filename)[1]
-
     new_filename = f"{file_uuid}{file_extention}"
 
     try:
         file_data = await file.read()
-        import io
         data_stream = io.BytesIO(file_data)
-        client.put_object(
+        await run_in_threadpool(
+            client.put_object,
             BUCKET_NAME,
             new_filename,
             data_stream,
@@ -86,14 +88,18 @@ async def upload_video(file: UploadFile):
         )
         logger.info(f"Uploaded {file.filename} as {new_filename}")
 
-        # Trigger Event with both the UUID and the real path
-        minio_path = f"{BUCKET_NAME}/{new_filename}"
-        publish_message(file_uuid, file.filename, minio_path)
+
+        await run_in_threadpool(
+            publish_message,
+            file_uuid,
+            file.filename,
+            f"{BUCKET_NAME}/{new_filename}"
+        )
 
         return {
             "message": "Video uploaded successfully",
             "video_id": file_uuid,
-            "original_name": file.filename
+            "filename": file.filename
         }
     except S3Error as e:
         logger.error(f"MinIO Error: {e}")
