@@ -6,6 +6,7 @@ import httpx
 import logging
 from minio import Minio
 import asyncio
+from functools import partial
 
 # configuration
 logging.basicConfig(level=logging.INFO)
@@ -18,6 +19,8 @@ MINIO_SECRET_KEY = os.getenv("MINIO_SECRET_KEY", "password123")
 ASSEMBLYAI_API_KEY = os.getenv("ASSEMBLYAI_API_KEY")
 
 AUDIO_BUCKET = "audio"
+INPUT_QUEUE = "audio_extracted"
+OUTPUT_QUEUE = "transcription_ready"
 
 #setup client
 minio_client = Minio(
@@ -29,7 +32,7 @@ minio_client = Minio(
 
 async def upload_to_assemblyai(file_path):
     headers = {'authorization': ASSEMBLYAI_API_KEY}
-    
+
     def read_file():
         with open(file_path, 'rb') as f:
             return f.read()
@@ -42,22 +45,21 @@ async def upload_to_assemblyai(file_path):
             headers=headers,
             content=file_data
         )
-    
+
     if response.status_code != 200:
         logger.error(f"Upload Failed: {response.text}")
         response.raise_for_status()
-        
+
     return response.json()['upload_url']
 
 async def transcribe_audio(audio_url):
     endpoint = "https://api.assemblyai.com/v2/transcript"
-    
+
     json_payload = {
         "audio_url": audio_url,
         "speaker_labels": True
-        # default lang - US english
     }
-    
+
     headers = {
         "authorization": ASSEMBLYAI_API_KEY,
         "content-type": "application/json"
@@ -71,76 +73,73 @@ async def transcribe_audio(audio_url):
 async def wait_for_completion(transcript_id):
     endpoint = f"https://api.assemblyai.com/v2/transcript/{transcript_id}"
     headers = {"authorization": ASSEMBLYAI_API_KEY}
-    
+
     async with httpx.AsyncClient() as client:
         while True:
             response = await client.get(endpoint, headers=headers)
             status = response.json()['status']
-            
+
             if status == 'completed':
                 return response.json()
             elif status == 'error':
                 raise Exception(f"Transcription failed: {response.json()['error']}")
-            
+
             logger.info(f"Status: {status}... waiting 5s")
             await asyncio.sleep(5)
 
-
-
-async def process_audio(message: aio_pika.IncomingMessage):
+# NOTE: pub_channel is passed in; DO NOT use message.channel or declare queues here
+async def process_audio(message: aio_pika.IncomingMessage, pub_channel: aio_pika.abc.AbstractChannel):
     async with message.process():
         local_path = ""
         try:
             body = message.body.decode()
             data = json.loads(body)
             logger.info(f"Received job: {data}")
-        
+
             video_id = data['video_id']
             filename_for_dashboard = data.get('filename', 'Unknown_Video')
             audio_filename = os.path.basename(data['audio_path'])
 
             local_path = f"/tmp/{audio_filename}"
-            
+
             # Download
             logger.info(f"Downloading {audio_filename}...")
             await asyncio.to_thread(
-                minio_client.fget_object, 
-                AUDIO_BUCKET, 
-                audio_filename, 
+                minio_client.fget_object,
+                AUDIO_BUCKET,
+                audio_filename,
                 local_path
-            )        
-            #  Upload
+            )
+
+            # Upload
             upload_url = await upload_to_assemblyai(local_path)
-        
+
             # Transcribe
             logger.info("Starting transcription job...")
             transcript_id = await transcribe_audio(upload_url)
-        
+
             # Wait
             result = await wait_for_completion(transcript_id)
             logger.info("Transcription complete!")
-            
-            #publish to next queue
-            channel = message.channel
-            await channel.declare_queue("transcription_ready", durable=True)
 
+            # Publish to next queue using pub_channel
             next_message = {
                 "video_id": video_id,
-                "transcript_text": result['text'],
-                "utterances": result['utterances'],
+                "transcript_text": result.get('text', ""),
+                "utterances": result.get('utterances', []),
                 "filename": filename_for_dashboard
             }
 
-            await channel.default_exchange.publish(
+            await pub_channel.default_exchange.publish(
                 aio_pika.Message(
                     body=json.dumps(next_message).encode(),
                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT
                 ),
-                routing_key="transcription_ready"
+                routing_key=OUTPUT_QUEUE
             )
 
         except Exception as e:
-            logger.error(f"CRITICAL ERROR: {e}")
+            logger.exception("CRITICAL ERROR while processing job")
         finally:
             if os.path.exists(local_path):
                 os.remove(local_path)
@@ -155,18 +154,25 @@ async def main():
             connection = await aio_pika.connect_robust(f"amqp://guest:guest@{RABBITMQ_HOST}/")
             async with connection:
                 channel = await connection.channel()
-
-                queue = await channel.declare_queue("audio_extracted", durable=True)
                 await channel.set_qos(prefetch_count=1)
+
+                # declare queues once here
+                await channel.declare_queue(INPUT_QUEUE, durable=True)
+                await channel.declare_queue(OUTPUT_QUEUE, durable=True)
+
+                queue = await channel.get_queue(INPUT_QUEUE)
                 logger.info("Transcriber worker started. Waiting...")
 
-                await queue.consume(process_audio)
+                await queue.consume(partial(process_audio, pub_channel=channel))
 
                 await asyncio.Future()
         except Exception as e:
             logger.error(f"Connection failed: {e}. Retrying in 5s...")
             await asyncio.sleep(5)
 
-
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
+``

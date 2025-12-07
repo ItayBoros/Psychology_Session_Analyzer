@@ -8,7 +8,7 @@ import plotly.express as px
 UPLOAD_API_URL = "http://upload-api:8000"
 QUERY_API_URL = "http://query-api:8000"
 
-st.set_page_config(page_title="Psychology AI", layout="wide")
+st.set_page_config(page_title="Psychology AI", layout="wide", page_icon="🧠")
 
 #side bar 
 st.sidebar.title("PsychoAnalyzer")
@@ -48,7 +48,7 @@ if page == "Upload Session":
                     progress_bar = st.progress(0)
                     status_text = st.empty()
                     
-                    status_text.text("⏳ Status: Transcribing & Analyzing...")
+                    status_text.text("⏳ Status: Transcribing & Analyzing... (This takes ~60 seconds)")
                     
                     for i in range(60):
                         time.sleep(5)
@@ -59,7 +59,6 @@ if page == "Upload Session":
                         if check_res.status_code == 200:
                             progress_bar.progress(100)
                             status_text.success("Analysis Complete!")
-                            st.balloons()
                             st.info(f"Go to the 'Analysis Dashboard' and enter ID: {video_id}")
                             break
                     else:
@@ -70,19 +69,35 @@ if page == "Upload Session":
 
 # dashboard page
 elif page == "Analysis Dashboard":
-    st.header("📊 Session Analysis")
+    st.header("Session Analysis")
     
+    # Input for Video ID
     try:
         list_res = requests.get(f"{QUERY_API_URL}/list")
         if list_res.status_code == 200:
             sessions = list_res.json()
-            session_ids = [s['video_id'] for s in sessions]
-            selected_id = st.selectbox("Select a Session", session_ids)
+            
+            session_map = {}
+            for s in sessions:
+                # use filename if available
+                label = s.get('filename', f"Session {s['video_id'][:8]}")
+                # make label unique just in case
+                display_name = f"{label} ({s['video_id'][:6]}...)"
+                session_map[display_name] = s['video_id']
+            
+            # user picks the Name, we get the ID
+            if session_map:
+                selected_label = st.selectbox("Select a Session", options=list(session_map.keys()))
+                selected_id = session_map[selected_label]
+            else:
+                st.info("No sessions found. Upload one first!")
+                selected_id = None
+
         else:
             st.error("Could not fetch session list.")
             selected_id = st.text_input("Enter Video ID manually")
-    except:
-        st.error("Query API is offline.")
+    except Exception as e:
+        st.error(f"Query API is offline. {e}")
         selected_id = None
 
     if selected_id:
@@ -107,6 +122,7 @@ elif page == "Analysis Dashboard":
                 
                 with col2:
                     st.subheader("Session Meta")
+                    st.write(f"**Filename:** {data.get('filename', 'Unknown')}")
                     st.write(f"**ID:** {data['video_id']}")
                     st.write(f"**Date:** {data.get('timestamp', 'N/A')}")
 

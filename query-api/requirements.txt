@@ -1,4 +1,4 @@
 fastapi
 uvicorn
-pymongo
+motor
 ddtrace

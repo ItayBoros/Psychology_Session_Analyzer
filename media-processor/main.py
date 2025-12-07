@@ -6,6 +6,7 @@ import tempfile
 from minio import Minio
 from moviepy.editor import VideoFileClip
 import asyncio
+from functools import partial
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("media_processor")
@@ -63,7 +64,7 @@ def convert_video_to_audio_sync(video_id, minio_object_name):
         if os.path.exists(local_video_path): os.remove(local_video_path)
         if os.path.exists(local_audio_path): os.remove(local_audio_path)
 
-async def process_video_message(message: aio_pika.IncomingMessage):
+async def process_video_message(message: aio_pika.IncomingMessage, pub_channel: aio_pika.abc.AbstractChannel):
     async with message.process():
         try:
             body = message.body.decode()
@@ -76,24 +77,18 @@ async def process_video_message(message: aio_pika.IncomingMessage):
             minio_object_name = os.path.basename(file_path)
 
             audio_path = await asyncio.to_thread(
-                convert_video_to_audio_sync, 
-                video_id, 
+                convert_video_to_audio_sync,
+                video_id,
                 minio_object_name
             )
-
-            #publish next message
-            channel = message.channel
-            
-            #ensure next queue exists
-            await channel.declare_queue("audio_extracted", durable=True)
 
             next_message = {
                 "video_id": video_id,
                 "audio_path": audio_path,
-                "filename": filename_for_dashboard 
+                "filename": filename_for_dashboard
             }
 
-            await channel.default_exchange.publish(
+            await pub_channel.default_exchange.publish(
                 aio_pika.Message(
                     body=json.dumps(next_message).encode(),
                     delivery_mode=aio_pika.DeliveryMode.PERSISTENT
@@ -105,29 +100,34 @@ async def process_video_message(message: aio_pika.IncomingMessage):
         except Exception as e:
             logger.error(f"Failed to process video: {e}")
 
-
 async def main():
     while True:
         try:
             logger.info("Connecting to RabbitMQ (Async)...")
             connection = await aio_pika.connect_robust(f"amqp://guest:guest@{RABBITMQ_HOST}/")
-            
             async with connection:
+                #one robust channel for both declare and publish
                 channel = await connection.channel()
-                
-                #setup queue
-                queue = await channel.declare_queue("video_uploaded", durable=True)
                 await channel.set_qos(prefetch_count=1)
 
+                #ensure queues exist
+                await channel.declare_queue("video_uploaded", durable=True)
+                await channel.declare_queue("audio_extracted", durable=True)
+
+                queue_in = await channel.get_queue("video_uploaded")
+
                 logger.info("Media Processor started. Waiting...")
-                # Start consuming
-                await queue.consume(process_video_message)
-                # keep running
-                await asyncio.Future()
+                await queue_in.consume(partial(process_video_message, pub_channel=channel))
+
+                await asyncio.Future()  # keep running
 
         except Exception as e:
             logger.error(f"Connection failed: {e}. Retrying in 5s...")
             await asyncio.sleep(5)
 
 if __name__ == "__main__":
-    main()
+    try:
+        import asyncio
+        asyncio.run(main()) 
+    except KeyboardInterrupt:
+        pass

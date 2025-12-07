@@ -1,5 +1,4 @@
-openai
-pymongo==3.12.0
+aio-pika
+motor
 redis
-pika
-ddtrace
+openai

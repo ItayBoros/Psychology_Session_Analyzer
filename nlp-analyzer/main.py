@@ -2,12 +2,12 @@ import os
 import json
 import hashlib
 import time
-import pika
+import aio_pika
 import logging
-import redis
-from pymongo import MongoClient
-from openai import OpenAI
-from pika import exceptions as pika_exceptions
+import redis.asyncio as redis 
+from motor.motor_asyncio import AsyncIOMotorClient
+from openai import AsyncOpenAI
+import asyncio
 
 #configuration
 logging.basicConfig(level=logging.INFO)
@@ -19,18 +19,18 @@ REDIS_HOST = os.getenv("REDIS_HOST", "redis")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 #connect clients
-redis_client = redis.Redis(host=REDIS_HOST, port=6379, db=0)
+redis_client = redis.Redis(host=REDIS_HOST, port=6379, db=0, decode_responses=True)
 
-client_mongo = MongoClient(MONGO_URI)
+client_mongo = AsyncIOMotorClient(MONGO_URI)
 db = client_mongo["psychology_db"]
 collection = db["sessions"]
 
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+openai_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
 
 def generate_cache_key(text):
     return hashlib.md5(text.encode('utf-8')).hexdigest()
 
-def analyze_with_llm(utterances):
+async def analyze_with_llm(utterances):
     
     # prepare the dialogue for the prompt
     dialogue_text = ""
@@ -96,7 +96,7 @@ def analyze_with_llm(utterances):
     """
 
     try:
-        response = openai_client.chat.completions.create(
+        response = await openai_client.chat.completions.create(
             model="gpt-5-nano-2025-08-07",
             response_format={"type": "json_object"},
             messages=[
@@ -109,58 +109,54 @@ def analyze_with_llm(utterances):
         logger.error(f"OpenAI API Call failed: {e}")
         raise e
     
-def process_analysis(ch, method, properties, body):
-    try:
-        message = json.loads(body)
-        logger.info(f"Received job for video: {message['video_id']}")
-        
-        video_id = message['video_id']
-        transcript_text = message['transcript_text']
-        utterances = message['utterances']
-        
-        # cache check
-        cache_key = generate_cache_key(transcript_text)
-        cached_result = redis_client.get(cache_key)
-        
-        if cached_result:
-            logger.info("Cache HIT! Using previous analysis from Redis.")
-            analysis_result = json.loads(cached_result)
-        else:
-            logger.info("Cache MISS. Calling OpenAI...")
-            analysis_result = analyze_with_llm(utterances)
-            
-            # Save to Redis
-            redis_client.setex(cache_key, 86400, json.dumps(analysis_result))
-
-        # save to mongo db
-        final_document = {
-            "video_id": video_id,
-            "raw_transcript": transcript_text,
-            "timestamp": message.get("timestamp", None),
-            "roles_identified": analysis_result.get("roles", {}),
-            "emotional_profile": analysis_result.get("emotional_profile", []), 
-            "key_interventions": analysis_result.get("key_interventions", []),
-            "sentence_analysis": analysis_result.get("analysis", [])
-        }
-        
-        collection.update_one(
-            {"video_id": video_id}, 
-            {"$set": final_document}, 
-            upsert=True
-        )
-        logger.info(f"Successfully saved analysis to MongoDB for {video_id}")
-
-        ch.basic_ack(delivery_tag=method.delivery_tag)
-
-    except Exception as e:
-        logger.error(f"Analysis failed: {e}")
+async def process_analysis(message: aio_pika.IncomingMessage):
+    async with message.process():
         try:
-            if getattr(ch, "is_open", False):
-                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-        except Exception as ack_err:
-            logger.error(f"Failed to nack message after error: {ack_err}")
+            body = message.body.decode()
+            data = json.loads(body)
+            logger.info(f"Received job for video: {data['video_id']}")
+            
+            video_id = data['video_id']
+            transcript_text = data['transcript_text']
+            utterances = data['utterances']
+            
+            # cache check
+            cache_key = generate_cache_key(transcript_text)
+            cached_result = await redis_client.get(cache_key)
+            
+            if cached_result:
+                logger.info("Cache HIT! Using previous analysis from Redis.")
+                analysis_result = json.loads(cached_result)
+            else:
+                logger.info("Cache MISS. Calling OpenAI...")
+                analysis_result = await analyze_with_llm(utterances)
+                
+                # Save to Redis
+                await redis_client.setex(cache_key, 86400, json.dumps(analysis_result))
 
-def main():
+            # save to mongo db  
+            final_document = {
+                "video_id": video_id,
+                "filename": data.get("filename", "Unknown"),
+                "raw_transcript": transcript_text,
+                "timestamp": data.get("timestamp", None),
+                "roles_identified": analysis_result.get("roles", {}),
+                "emotional_profile": analysis_result.get("emotional_profile", []), 
+                "key_interventions": analysis_result.get("key_interventions", []),
+                "sentence_analysis": analysis_result.get("analysis", [])
+            }
+            
+            await collection.update_one(
+                {"video_id": video_id}, 
+                {"$set": final_document}, 
+                upsert=True
+            )
+            logger.info(f"Successfully saved analysis to MongoDB for {video_id}")
+
+        except Exception as e:
+            logger.error(f"Analysis failed: {e}")
+
+async def main():
     if not OPENAI_API_KEY:
         logger.error("Missing OPENAI_API_KEY! Please check your .env file.")
         return
@@ -170,41 +166,19 @@ def main():
     while True:
         try:
             logger.info("Connecting to RabbitMQ...")
-            connection = pika.BlockingConnection(
-                pika.ConnectionParameters(host=RABBITMQ_HOST)
-            )
-            channel = connection.channel()
+            connection = await aio_pika.connect_robust(f"amqp://guest:guest@{RABBITMQ_HOST}/")
+            async with connection:
+                channel = await connection.channel()
+                await channel.set_qos(prefetch_count=1)
+                queue = await channel.declare_queue("transcription_ready", durable=True)
+                await queue.consume(process_analysis)
 
-            channel.queue_declare(queue='transcription_ready', durable=True)
-            channel.basic_qos(prefetch_count=1)
-            channel.basic_consume(
-                queue='transcription_ready',
-                on_message_callback=process_analysis
-            )
 
-            logger.info("NLP Analyzer started. Waiting for messages...")
-            channel.start_consuming()
-
-        except (pika_exceptions.StreamLostError,
-                pika_exceptions.AMQPConnectionError,
-                pika_exceptions.ConnectionWrongStateError) as e:
-            logger.error(f"RabbitMQ connection lost: {e}. Reconnecting in 5 seconds...")
-            time.sleep(5)
-            continue
-
-        except KeyboardInterrupt:
-            logger.info("NLP Analyzer shutting down by KeyboardInterrupt...")
-            try:
-                if connection and not connection.is_closed:
-                    connection.close()
-            except Exception:
-                pass
-            break
+                await asyncio.Future()
 
         except Exception as e:
-            logger.error(f"Unexpected error in main loop: {e}")
-            time.sleep(5)
-            continue
+            logger.error(f"Connection failed: {e}. Retrying in 5s...")
+            await asyncio.sleep(5)
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
