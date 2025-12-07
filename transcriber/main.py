@@ -90,6 +90,8 @@ def process_audio(ch, method, properties, body):
         logger.info(f"Received job: {message}")
         
         video_id = message['video_id']
+        filename_for_dashboard = message.get('filename', 'Unknown_Video')
+
         audio_filename = os.path.basename(message['audio_path'])
         local_path = f"/tmp/{audio_filename}"
         
@@ -112,7 +114,8 @@ def process_audio(ch, method, properties, body):
         next_message = {
             "video_id": video_id,
             "transcript_text": result['text'],
-            "utterances": result['utterances']
+            "utterances": result['utterances'],
+            "filename": filename_for_dashboard
         }
         
         ch.basic_publish(
@@ -137,7 +140,7 @@ def main():
         return
 
     logger.info("Waiting for RabbitMQ...")
-    connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST))
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host=RABBITMQ_HOST, heartbeat=0))
     channel = connection.channel()
     
     channel.queue_declare(queue='audio_extracted', durable=True)
