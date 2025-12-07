@@ -35,18 +35,20 @@ def process_video(ch, method, properties, body):
 
     video_id = message['video_id']   
     file_path = message['file_path']
-    filename = os.path.basename(file_path)  
 
+    filename_for_dashboard = message.get('filename', 'Unknown_Video')  
+
+    minio_object_name = os.path.basename(file_path)
     # download video from Minio to temp file
-    local_video_path = f"/tmp/{filename}"
+    local_video_path = f"/tmp/{minio_object_name}"
     local_audio_path = f"/tmp/{video_id}.mp3"
 
     try:
-        logger.info(f"Downloading video {filename} from Minio...")
-        client.fget_object(SOURCE_BUCKET, filename, local_video_path)
+        logger.info(f"Downloading video {minio_object_name} from Minio...")
+        client.fget_object(SOURCE_BUCKET, minio_object_name, local_video_path)
         
         # extract audio using moviepy
-        logger.info(f"Extracting audio from video {filename}...")
+        logger.info(f"Extracting audio from video {minio_object_name}...")
         video = VideoFileClip(local_video_path)
         video.audio.write_audiofile(local_audio_path, logger=None)
         video.close()
@@ -69,7 +71,8 @@ def process_video(ch, method, properties, body):
         # publish audio ready message to RabbitMQ
         next_message = {
             "video_id": video_id,
-            "audio_path": f"{DEST_BUCKET}/{video_id}.mp3"
+            "audio_path": f"{DEST_BUCKET}/{video_id}.mp3",
+            "filename": filename_for_dashboard 
         }
         
         ch.basic_publish(
@@ -86,7 +89,7 @@ def process_video(ch, method, properties, body):
 
     except Exception as e:
         logger.error(f"Failed to process video {filename}: {e}")
-        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+        ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)    
     finally:
         # clean up temp files
         if os.path.exists(local_video_path):
