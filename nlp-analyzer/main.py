@@ -8,9 +8,12 @@ import redis.asyncio as redis
 from motor.motor_asyncio import AsyncIOMotorClient
 from openai import AsyncOpenAI
 import asyncio
+import sys
 
-#configuration
-logging.basicConfig(level=logging.INFO)
+# Configure logging
+logging.basicConfig(level=logging.INFO,
+                    stream=sys.stdout
+                    )
 logger = logging.getLogger("nlp-analyzer")
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")

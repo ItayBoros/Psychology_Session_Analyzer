@@ -2,9 +2,12 @@ import os
 import logging
 from fastapi import FastAPI, HTTPException
 from motor.motor_asyncio import AsyncIOMotorClient
+import sys
 
-# --- CONFIGURATION ---
-logging.basicConfig(level=logging.INFO)
+# Configure logging
+logging.basicConfig(level=logging.INFO,
+                    stream=sys.stdout
+                    )
 logger = logging.getLogger("query-api")
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongodb:27017")

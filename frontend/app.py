@@ -8,7 +8,7 @@ import plotly.express as px
 UPLOAD_API_URL = "http://upload-api:8000"
 QUERY_API_URL = "http://query-api:8000"
 
-st.set_page_config(page_title="Psychology AI", layout="wide", page_icon="🧠")
+st.set_page_config(page_title="Psychology AI", layout="wide")
 
 #side bar 
 st.sidebar.title("PsychoAnalyzer")
@@ -48,10 +48,10 @@ if page == "Upload Session":
                     progress_bar = st.progress(0)
                     status_text = st.empty()
                     
-                    status_text.text("⏳ Status: Transcribing & Analyzing... (This takes ~60 seconds)")
+                    status_text.text("Status: Transcribing & Analyzing...")
                     
                     for i in range(60):
-                        time.sleep(5)
+                        time.sleep(10)
                         progress_bar.progress((i + 1) / 60)
                         
                         # check if analysis exists

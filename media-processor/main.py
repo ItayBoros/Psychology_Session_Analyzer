@@ -7,8 +7,12 @@ from minio import Minio
 from moviepy.editor import VideoFileClip
 import asyncio
 from functools import partial
+import sys
 
-logging.basicConfig(level=logging.INFO)
+# Configure logging
+logging.basicConfig(level=logging.INFO,
+                    stream=sys.stdout
+                    )
 logger = logging.getLogger("media_processor")
 
 # configuration from environment variables from Docker

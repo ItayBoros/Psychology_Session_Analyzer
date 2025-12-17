@@ -9,9 +9,12 @@ import uuid
 import io
 from minio import Minio
 from minio.error import S3Error
+import sys
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO,
+                    stream=sys.stdout
+                    )
 logger = logging.getLogger("upload-api")
 
 app = FastAPI()

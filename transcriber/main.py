@@ -7,9 +7,12 @@ import logging
 from minio import Minio
 import asyncio
 from functools import partial
+import sys
 
-# configuration
-logging.basicConfig(level=logging.INFO)
+# Configure logging
+logging.basicConfig(level=logging.INFO,
+                    stream=sys.stdout
+                    )
 logger = logging.getLogger("transcriber")
 
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
@@ -175,4 +178,3 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         pass
-``
